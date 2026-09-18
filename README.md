@@ -103,6 +103,41 @@ If total content exceeds the character budget (default 8000), Workspace is fully
 
 See [docs/design.md](docs/design.md) for the full design specification.
 
+## Configuration
+
+The injected memory block is capped so it cannot crowd out the rest of the
+context. Two settings raise those caps:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `maxTotalChars` | `8000` | Total characters of injected memory: the workspace, then the global layer, then the state file |
+| `maxFileChars` | `4000` | Per-file cap applied before the total is considered |
+
+Resolution order, highest first:
+
+1. Environment: `PI_MEMORY_MAX_TOTAL_CHARS`, `PI_MEMORY_MAX_FILE_CHARS`
+2. `~/.pi/agent/pi-memory-extension.json`
+
+   ```json
+   { "maxTotalChars": 25000, "maxFileChars": 14000 }
+   ```
+
+3. The defaults above
+
+The caps are re-read at session start, so an edit applies to the next session
+without restarting Pi. The startup notice reports the values in force:
+
+```
+🧠 Pi Memory: 0 global + 5 workspace = 5 files (caps 25000/14000)
+```
+
+A missing or unparseable config file falls back to the defaults rather than
+failing the session.
+
+Note that the workspace is preserved first when the total is exceeded, so a
+project store can be large while the global layer absorbs the truncation. So
+neither setting is a limit on what is stored on disk, only on what is injected.
+
 ## License
 
 MIT
