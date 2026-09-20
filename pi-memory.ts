@@ -301,10 +301,20 @@ export default function (pi: ExtensionAPI) {
 
     cache = { globalRoot: config.globalDir, workspaceRoot, files: merged, stateContent };
 
-    ctx.ui.notify(
-      `🧠 Pi Memory: ${globalFiles.length} global + ${workspaceFiles.length} workspace = ${merged.length} files (caps ${config.maxTotalChars}/${config.maxFileChars})`,
-      "info",
-    );
+    // A transient notice from session_start is not reliably rendered: the UI is
+    // not settled when this fires, and on some machines the message is dropped
+    // entirely. A persistent message is transcript state, so it renders wherever
+    // the transcript does. The notice falls back to notify() on a build without
+    // sendMessage.
+    const summary = `🧠 Pi Memory: ${globalFiles.length} global + ${workspaceFiles.length} workspace = ${merged.length} files (caps ${config.maxTotalChars}/${config.maxFileChars})`;
+    try {
+      await pi.sendMessage(
+        { customType: "pi-memory-status", content: summary, display: true },
+        { triggerTurn: false },
+      );
+    } catch {
+      ctx.ui.notify(summary, "info");
+    }
   });
 
   // ── before_agent_start: Inject memory ────────
