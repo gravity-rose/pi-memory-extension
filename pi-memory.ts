@@ -332,6 +332,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const lines: string[] = [
+        `Caps:    ${config.maxTotalChars} total, ${config.maxFileChars} per file`,
         `Global:  ${cache.globalRoot}`,
         `Workspace: ${cache.workspaceRoot ?? "none"}`,
         `Loaded files: ${cache.files.length}`,
