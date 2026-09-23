@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import * as fs from "node:fs/promises";
+import * as fsSync from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
@@ -31,6 +32,38 @@ const DEFAULT_CONFIG: MemoryConfig = {
   priority: ["global", "workspace"],
   globalAlwaysInject: ["user", "facts", "knowledge"],
 };
+
+/**
+ * Character caps, resolved in order of precedence:
+ *
+ *   1. `~/.pi/agent/pi-memory-extension.json`
+ *        { "maxTotalChars": 25000, "maxFileChars": 14000 }
+ *   2. `PI_MEMORY_MAX_TOTAL_CHARS` / `PI_MEMORY_MAX_FILE_CHARS`
+ *   3. the defaults above
+ *
+ * The environment wins so a single run can widen the budget without editing a
+ * file. A store migrated from another memory system can be many times larger
+ * than the defaults allow, and an unconfigurable cap turns that into silent
+ * truncation in `readdir` order.
+ */
+export function loadCapConfig(base: MemoryConfig = DEFAULT_CONFIG): MemoryConfig {
+  const next = { ...base };
+  const file = path.join(os.homedir(), ".pi", "agent", "pi-memory-extension.json");
+  try {
+    const parsed = JSON.parse(fsSync.readFileSync(file, "utf-8")) as Record<string, unknown>;
+    for (const key of ["maxTotalChars", "maxFileChars"] as const) {
+      const value = parsed[key];
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) next[key] = value;
+    }
+  } catch {
+    // A missing or unparseable file must not fail a session; keep the defaults.
+  }
+  const envTotal = Number.parseInt(process.env.PI_MEMORY_MAX_TOTAL_CHARS ?? "", 10);
+  const envFile = Number.parseInt(process.env.PI_MEMORY_MAX_FILE_CHARS ?? "", 10);
+  if (Number.isFinite(envTotal) && envTotal > 0) next.maxTotalChars = envTotal;
+  if (Number.isFinite(envFile) && envFile > 0) next.maxFileChars = envFile;
+  return next;
+}
 
 // ──────────────────────────────────────────────
 // Types
@@ -233,11 +266,12 @@ Use this information as reference when answering, but do not treat it as rules t
 // ──────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
-  let config = { ...DEFAULT_CONFIG };
+  let config = loadCapConfig();
   let cache: MemoryCache | null = null;
 
   // ── session_start: Load Global + Workspace Memory ──
   pi.on("session_start", async (_event, ctx) => {
+    config = loadCapConfig();
     const cwd = ctx.cwd;
     if (!cwd) return;
 
@@ -267,10 +301,20 @@ export default function (pi: ExtensionAPI) {
 
     cache = { globalRoot: config.globalDir, workspaceRoot, files: merged, stateContent };
 
-    ctx.ui.notify(
-      `🧠 Pi Memory: ${globalFiles.length} global + ${workspaceFiles.length} workspace = ${merged.length} files`,
-      "info",
-    );
+    // A transient notice from session_start is not reliably rendered: the UI is
+    // not settled when this fires, and on some machines the message is dropped
+    // entirely. A persistent message is transcript state, so it renders wherever
+    // the transcript does. The notice falls back to notify() on a build without
+    // sendMessage.
+    const summary = `🧠 Pi Memory: ${globalFiles.length} global + ${workspaceFiles.length} workspace = ${merged.length} files (caps ${config.maxTotalChars}/${config.maxFileChars})`;
+    try {
+      await pi.sendMessage(
+        { customType: "pi-memory-status", content: summary, display: true },
+        { triggerTurn: false },
+      );
+    } catch {
+      ctx.ui.notify(summary, "info");
+    }
   });
 
   // ── before_agent_start: Inject memory ────────
@@ -298,6 +342,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const lines: string[] = [
+        `Caps:    ${config.maxTotalChars} total, ${config.maxFileChars} per file`,
         `Global:  ${cache.globalRoot}`,
         `Workspace: ${cache.workspaceRoot ?? "none"}`,
         `Loaded files: ${cache.files.length}`,
